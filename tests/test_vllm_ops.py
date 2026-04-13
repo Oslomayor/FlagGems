@@ -8,6 +8,7 @@ import pytest
 import torch
 
 import flag_gems
+from flag_gems.runtime import torch_device_fn
 
 from .conftest import QUICK_MODE
 
@@ -353,7 +354,7 @@ def test_accuracy_fused_moe_vs_ref(config, dtype):
         topk_ids,
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     # Fused bf16/fp16 kernels accumulate rounding errors across two GEMMs
     # and an activation; use tolerances proportional to output magnitude.
@@ -418,7 +419,7 @@ def test_accuracy_fused_moe_vs_vllm(config, dtype):
         inplace=False,
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     # Fused bf16/fp16 kernels accumulate rounding errors across two GEMMs
     # and an activation; use tolerances proportional to output magnitude.
@@ -742,7 +743,7 @@ def test_accuracy_fused_moe_fp8(config):
         hidden_states, w1_deq, w2_deq, topk_weights, topk_ids, quant_mode="fp8"
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     # FP8 quantization introduces more error than bf16, use wider tolerances.
     # Two quantized GEMMs + activation create cumulative rounding error.
@@ -834,7 +835,7 @@ def test_accuracy_fused_moe_fp8_blockwise(config, block_shape):
         block_shape,
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     rtol = 2e-1
     atol = max(5e-2, ref.abs().max().item() * 5e-2)
@@ -843,6 +844,10 @@ def test_accuracy_fused_moe_fp8_blockwise(config, block_shape):
 
 @pytest.mark.fused_moe
 @pytest.mark.parametrize("config", FUSED_MOE_QUANT_CONFIGS)
+@pytest.mark.skipif(
+    flag_gems.vendor_name == "mthreads",
+    reason="mthreads not support INT8 SQMMA yet",
+)
 def test_accuracy_fused_moe_int8(config):
     """Test FlagGems fused_moe with INT8 W8A8 per-channel quantization."""
     num_tokens, num_experts, hidden_size, intermediate_size, topk = config
@@ -907,7 +912,7 @@ def test_accuracy_fused_moe_int8(config):
         hidden_states, w1_deq, w2_deq, topk_weights, topk_ids, quant_mode="int8"
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     # INT8 quantization introduces more error, use wider tolerances
     rtol = 2e-1
@@ -1019,7 +1024,7 @@ def test_accuracy_fused_moe_int8_w8a16(config):
         topk_ids,
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     # Weight-only quantization has less error than W8A8 since activations
     # are full precision, but still has weight quantization rounding error.
@@ -1096,7 +1101,7 @@ def test_accuracy_fused_moe_int4_w4a16(config):
         topk_ids,
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     # INT4 has coarser quantization → wider tolerance
     rtol = 3e-1
@@ -1154,7 +1159,7 @@ def test_fused_moe_inplace(config, dtype):
         inplace=True,
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     # Result should be the same tensor as input
     assert result.data_ptr() == hidden_copy.data_ptr(), "inplace should reuse input"
@@ -1210,7 +1215,7 @@ def test_fused_moe_apply_router_weight_on_input(config, dtype):
         apply_router_weight_on_input=True,
     )
 
-    torch.cuda.synchronize()
+    torch_device_fn.synchronize()
 
     # Due to SiLU nonlinearity, these will differ, but both should be
     # close to the reference with weight on the respective path.
