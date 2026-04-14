@@ -5,6 +5,7 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
 from flag_gems.runtime import torch_device_fn
 
 logger = logging.getLogger(__name__)
@@ -69,12 +70,12 @@ def logaddexp(x, y):
     logger.debug("GEMS LOGADDEXP")
     # Determine device
     device = None
-    if torch.is_tensor(x) and x.is_cuda:
+    if torch.is_tensor(x) and x.device.type == flag_gems.device:
         device = x.device
-    if device is None and torch.is_tensor(y) and y.is_cuda:
+    if device is None and torch.is_tensor(y) and y.device.type == flag_gems.device:
         device = y.device
     if device is None:
-        raise ValueError("At least one input must be a CUDA tensor")
+        raise ValueError(f"At least one input must be a {flag_gems.device} tensor")
 
     # Determine dtype
     x_t = x if torch.is_tensor(x) else torch.tensor(x)
