@@ -846,7 +846,7 @@ def test_accuracy_fused_moe_fp8_blockwise(config, block_shape):
 @pytest.mark.parametrize("config", FUSED_MOE_QUANT_CONFIGS)
 @pytest.mark.skipif(
     flag_gems.vendor_name == "mthreads",
-    reason="mthreads not support INT8 SQMMA yet",
+    reason="mthreads does not support INT8 SQMMA yet",
 )
 def test_accuracy_fused_moe_int8(config):
     """Test FlagGems fused_moe with INT8 W8A8 per-channel quantization."""
