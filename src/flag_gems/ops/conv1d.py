@@ -12,28 +12,37 @@ _FALLBACK_KEYSET = torch._C.DispatchKeySet(
 )
 
 
+def _ensure_list_for_conv1d(arg):
+    if isinstance(arg, (list, tuple)):
+        return arg
+    return [arg]
+
+
 def conv1d(input, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
     logger.debug("GEMS CONV1D")
     if torch.is_grad_enabled():
+        stride_arg = _ensure_list_for_conv1d(stride)
+        dilation_arg = _ensure_list_for_conv1d(dilation)
         if isinstance(padding, str):
             return torch.ops.aten.conv1d.padding.redispatch(
                 _FALLBACK_KEYSET,
                 input,
                 weight,
                 bias,
-                stride,
+                stride_arg,
                 padding,
-                dilation,
+                dilation_arg,
                 groups,
             )
+        padding_arg = _ensure_list_for_conv1d(padding)
         return torch.ops.aten.conv1d.default.redispatch(
             _FALLBACK_KEYSET,
             input,
             weight,
             bias,
-            stride,
-            padding,
-            dilation,
+            stride_arg,
+            padding_arg,
+            dilation_arg,
             groups,
         )
     if isinstance(stride, (list, tuple)):

@@ -224,28 +224,37 @@ def conv3d_forward_kernel(
 #         pass
 
 
+def _ensure_list_for_conv3d(arg, length=3):
+    if isinstance(arg, (list, tuple)):
+        return arg
+    return [arg] * length
+
+
 def conv3d(input, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
     logger.debug("GEMS CONV3D")
     if torch.is_grad_enabled():
+        stride_arg = _ensure_list_for_conv3d(stride)
+        dilation_arg = _ensure_list_for_conv3d(dilation)
         if isinstance(padding, str):
             return torch.ops.aten.conv3d.padding.redispatch(
                 _FALLBACK_KEYSET,
                 input,
                 weight,
                 bias,
-                stride,
+                stride_arg,
                 padding,
-                dilation,
+                dilation_arg,
                 groups,
             )
+        padding_arg = _ensure_list_for_conv3d(padding)
         return torch.ops.aten.conv3d.default.redispatch(
             _FALLBACK_KEYSET,
             input,
             weight,
             bias,
-            stride,
-            padding,
-            dilation,
+            stride_arg,
+            padding_arg,
+            dilation_arg,
             groups,
         )
     assert weight.ndim == 5, "Weights must be 5D, received shape {weight.shape}"
