@@ -8,6 +8,7 @@ import pytest
 import torch
 
 import flag_gems
+from flag_gems.runtime import torch_device_fn
 
 from .accuracy_utils import (
     ALL_INT_DTYPES,
@@ -2135,7 +2136,7 @@ def test_accuracy_moe_align_block_size(
                 f"actual={actual_expert_tokens[expert_id]}"
             )
 
-    torch.cuda.synchronize() if flag_gems.vendor_name != "ascend" else torch.npu.synchronize()
+    torch_device_fn.synchronize()
 
     _verify_expert_level_sorting(
         sorted_ids,
@@ -2464,7 +2465,7 @@ def test_unfold_backward(input_sizes, dim, size, step, dtype):
     "shape, value, expected_err, match_str",
     [
         ((), 1.0, None, None),
-        ((2,), 1.0, RuntimeError, "is ambiguous"),
+        ((2,), 1.0, RuntimeError, "is ambiguous|Boolean value of Tensor"),
         ((1,), 1.0, None, None),
     ],
 )
@@ -2472,24 +2473,25 @@ def test_assert_async_consistency(shape, value, expected_err, match_str):
     msg = "Assertion failed!"
     inp_pt = torch.full(shape, value, device=device)
     inp_triton = inp_pt.clone()
+
     if expected_err:
         with flag_gems.use_gems():
             with pytest.raises(expected_err, match=match_str):
                 flag_gems._assert_async(inp_triton, msg)
                 if value == 0:
-                    torch.cuda.synchronize()
+                    torch_device_fn.synchronize()
     else:
         with flag_gems.use_gems():
             flag_gems._assert_async(inp_triton, msg)
-            torch.cuda.synchronize()
+            torch_device_fn.synchronize()
     if expected_err:
         with pytest.raises(expected_err, match=match_str):
             torch._assert_async(inp_pt, msg)
             if value == 0:
-                torch.cuda.synchronize()
+                torch_device_fn.synchronize()
     else:
         torch._assert_async(inp_pt, msg)
-        torch.cuda.synchronize()
+        torch_device_fn.synchronize()
 
 
 @pytest.mark.lift_fresh_copy
