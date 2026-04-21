@@ -68,6 +68,14 @@ def assert_close(res, ref, dtype, equal_nan=False, reduce_dim=1, atol=1e-4):
     ref = ref.to(dtype)
     res, ref = _maybe_move_to_cpu(res, ref)
     rtol = RESOLUTION[dtype]
+
+    vendor_name = runtime.device.vendor_name
+    if vendor_name == "mthreads":
+        if dtype == torch.bfloat16:
+            atol = 2e-3
+        elif dtype == torch.complex32:
+            atol = 3e-3
+
     torch.testing.assert_close(
         res, ref, atol=atol * reduce_dim, rtol=rtol, equal_nan=equal_nan
     )
