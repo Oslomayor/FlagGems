@@ -20,6 +20,14 @@ def create_tma_device_descriptor(tensor, block_m, block_n, device):
             tensor.stride(0) == 1 and tensor.stride(1) == tensor.shape[0]
         ), "TMA descriptor only supports contiguous or transposed 2D tensors"
         shapes.reverse()
+
+    version = triton.__version__.split(".")
+    major, minor = int(version[0]), int(version[1])
+    if major == 3 and minor == 1:
+        desc_ptr = desc_np.ctypes.data
+    else:
+        desc_ptr = int(desc_np.ctypes.data)
+
     triton.runtime.driver.active.utils.fill_2d_tma_descriptor(
         tensor.data_ptr(),
         shapes[0],
@@ -27,7 +35,7 @@ def create_tma_device_descriptor(tensor, block_m, block_n, device):
         block_m,
         block_n,
         tensor.element_size(),
-        int(desc_np.ctypes.data),
+        desc_ptr,
     )
     desc = torch.tensor(desc_np, device=device)
     return desc

@@ -41,7 +41,6 @@ def matmul_get_configs():
 
 @triton.jit
 def prev_multiple_of(a, b):
-    # the largest x<a that x%b ==0
     return tl.cdiv(a, b) * b - b
 
 
@@ -71,17 +70,14 @@ def mm_kernel(
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
 ):
-    # matrix multiplication
     pid = tle.program_id(0)
     grid_m = tl.cdiv(M, BLOCK_M)
     grid_n = tl.cdiv(N, BLOCK_N)
-    # re-order program ID for better L2 performance
     width = GROUP_M * grid_n
     group_id = pid // width
     group_size = min(grid_m - group_id * GROUP_M, GROUP_M)
     pid_m = group_id * GROUP_M + (pid % group_size)
     pid_n = (pid % width) // (group_size)
-    # do matrix multiplication
     rm = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     rn = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     ram = tl.max_contiguous(tl.multiple_of(rm % M, BLOCK_M), BLOCK_M).to(tl.int64)
@@ -100,7 +96,6 @@ def mm_kernel(
             b = b.to(C.dtype.element_ty)
         acc += tl.dot(a, b, out_dtype=tl.float32, allow_tf32=False)
 
-    # loop peeling
     rk = (prev_multiple + tl.arange(0, BLOCK_K)).to(tl.int64)
     mask_k = rk < K
     a = tl.load(
@@ -115,12 +110,10 @@ def mm_kernel(
     acc += tl.dot(a, b, out_dtype=tl.float32, allow_tf32=False)
 
     acc = acc.to(C.dtype.element_ty)
-    # rematerialize rm and rn to save registers
     rm = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)).to(tl.int64)
     rn = (pid_n * BLOCK_N + tl.arange(0, BLOCK_N)).to(tl.int64)
     C = C + (rm[:, None] * stride_cm + rn[None, :] * stride_cn)
     mask = (rm < M)[:, None] & (rn < N)[None, :]
-    # handles write-back with reduction-splitting
     tl.store(C, acc, mask=mask)
 
 
@@ -166,7 +159,6 @@ def gemv_kernel(
         b_ptrs = B + k_offset * stride_bk
         b = tl.load(b_ptrs, mask=k_mask, other=0.0)
 
-        # Keep the reduction in fp32 so N=1 GEMV matches the mm path more closely.
         a = a.to(tl.float32)
         b = b.to(tl.float32)
         acc += tl.sum(a * b[None, :], axis=1)
@@ -196,19 +188,15 @@ def get_higher_dtype(a, b):
 def mm_fma(a, b):
     logger.debug("GEMS_MTHREADS MM(FMA)")
     device = a.device
-    # handle non-contiguous inputs if necessary
     if a.stride(0) > 1 and a.stride(1) > 1:
         a = a.contiguous()
     if b.stride(0) > 1 and b.stride(1) > 1:
         b = b.contiguous()
-    # checks constraints
     assert a.shape[1] == b.shape[0], "incompatible dimensions"
     M, K = a.shape
     _, N = b.shape
-    # allocates output
     c_dtype = get_higher_dtype(a.dtype, b.dtype)
     c = torch.empty((M, N), device=device, dtype=c_dtype)
-    # launch kernel
     grid = lambda META: (
         triton.cdiv(M, META["BLOCK_M"]) * triton.cdiv(N, META["BLOCK_N"]),
     )
@@ -256,20 +244,16 @@ def gemv_mm(a, b, c, M, K):
 
 def mm_out(a, b, *, out):
     logger.debug("GEMS_MTHREADS MM_OUT")
-    # handle non-contiguous inputs if necessary
     if a.stride(0) > 1 and a.stride(1) > 1:
         a = a.contiguous()
     if b.stride(0) > 1 and b.stride(1) > 1:
         b = b.contiguous()
-    # checks constraints
     assert a.shape[1] == b.shape[0], "incompatible dimensions"
     M, K = a.shape
     _, N = b.shape
-    # allocates output
     c = out
     if N == 1:
         return gemv_mm(a, b, c, M, K)
-    # launch kernel
     grid = lambda META: (
         triton.cdiv(M, META["BLOCK_M"]) * triton.cdiv(N, META["BLOCK_N"]),
     )
@@ -329,7 +313,76 @@ def sqmma_get_configs(pre_hook=sqmma_descriptor_pre_hook):
     strategy=["align32", "align32", "align32", "align32", "align32", "default"],
 )
 @triton.jit
-def mm_sqmma_kernel(
+def mm_sqmma_kernel_v31(
+    A,
+    B,
+    C,
+    a_desc_ptr,
+    b_desc_ptr,
+    c_desc_ptr,
+    M,
+    N,
+    K,
+    stride_am,
+    stride_ak,
+    stride_bk,
+    stride_bn,
+    dtype: tl.constexpr,
+    GROUP_M: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    ab_dtype: tl.constexpr,
+    c_dtype: tl.constexpr,
+    is_transpose_a: tl.constexpr = False,
+    is_transpose_b: tl.constexpr = False,
+):
+    pid = tle.program_id(0)
+    grid_m = tl.cdiv(M, BLOCK_M)
+    grid_n = tl.cdiv(N, BLOCK_N)
+    width = GROUP_M * grid_n
+    group_id = pid // width
+    group_size = min(grid_m - group_id * GROUP_M, GROUP_M)
+    pid_m = group_id * GROUP_M + (pid % group_size)
+    pid_n = (pid % width) // (group_size)
+    offs_am = pid_m * BLOCK_M
+    offs_bn = pid_n * BLOCK_N
+    offs_k = 0
+    offs_am = offs_am.to(tl.int32)
+    offs_bn = offs_bn.to(tl.int32)
+    offs_k = offs_k.to(tl.int32)
+    accumulator = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    tme_load_ab_dtype = ab_dtype
+    c_store_dtype = c_dtype
+    for k in range(0, tl.cdiv(K, BLOCK_K)):
+        a = tl._experimental_descriptor_load(
+            a_desc_ptr,
+            [offs_am, offs_k],
+            [BLOCK_M, BLOCK_K],
+            tme_load_ab_dtype,
+            is_transpose_a,
+        )
+        b = tl._experimental_descriptor_load(
+            b_desc_ptr,
+            [offs_k, offs_bn],
+            [BLOCK_K, BLOCK_N],
+            tme_load_ab_dtype,
+            is_transpose_b,
+        )
+        accumulator += tl.dot(a, b, out_dtype=tl.float32, allow_tf32=False)
+        offs_k += BLOCK_K
+    accumulator = accumulator.to(c_store_dtype)
+    tl._experimental_descriptor_store(c_desc_ptr, accumulator, [offs_am, offs_bn])
+
+
+@libentry()
+@libtuner(
+    configs=sqmma_get_configs(),
+    key=["M", "N", "K", "stride_am", "stride_bk", "dtype"],
+    strategy=["align32", "align32", "align32", "align32", "align32", "default"],
+)
+@triton.jit
+def mm_sqmma_kernel_v32(
     A,
     B,
     C,
@@ -419,7 +472,6 @@ def get_triton_type(elem_type):
 def mm_sqmma(A, B, M, N, K, GROUP_M):
     logger.debug("GEMS_MTHREADS MM(SQMMA)")
     device = A.device
-    # handle non-contiguous inputs if necessary
     is_transpose_a = False
     is_transpose_b = False
     if not A.is_contiguous():
@@ -445,7 +497,15 @@ def mm_sqmma(A, B, M, N, K, GROUP_M):
         1,
         1,
     )
-    mm_sqmma_kernel[grid](
+
+    version = triton.__version__.split(".")
+    major, minor = int(version[0]), int(version[1])
+    if major == 3 and minor == 1:
+        kernel = mm_sqmma_kernel_v31
+    else:
+        kernel = mm_sqmma_kernel_v32
+
+    kernel[grid](
         A,
         B,
         C,
