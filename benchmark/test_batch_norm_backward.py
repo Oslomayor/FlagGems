@@ -3,7 +3,7 @@ import torch
 
 import flag_gems
 
-from . import attr_util as attr_utils
+from . import attri_util as attr_utils
 from . import performance_utils as utils
 
 
