@@ -47,8 +47,8 @@ jobs:
           esac
 
       - uses: actions/checkout@v6
-        with:
-          ssh-key: ${{ secrets.RUNNER_SSH_KEY }}
+        # with:
+        #  ssh-key: ${{ secrets.RUNNER_SSH_KEY }}
 
       - name: Setup FlagGems
         shell: bash
@@ -80,13 +80,21 @@ jobs:
           echo "VENDOR=${VENDOR}" >> $GITHUB_ENV
 
           ./setup.sh ${VENDOR}
+
       - name: Check GPU availability
         shell: bash
         run: |
           bash "tools/gpu_check_${VENDOR}.sh"
+
       - name: Run tests
         shell: bash
         run: |
           source .venv/bin/activate
           source tools/set-env.sh ${VENDOR}
           tools/run_tests.py --ops ${{ inputs.operators }} --gpus ${{ inputs.gpus }}
+
+      - name: Upload results
+        uses: actions/upload-artifact@v7
+        with:
+          name: random-test
+          path: results/
