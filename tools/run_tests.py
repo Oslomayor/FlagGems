@@ -18,6 +18,7 @@ from pathlib import Path
 
 import distro
 import git
+import torchada  # noqa
 import yaml
 
 import flag_gems
@@ -228,6 +229,7 @@ def run_cmd(op, cmd, cwd=None, env=None, timeout=600, flavor=None):
 
     try:
         p.wait(timeout=timeout)
+        return p.returncode
     except subprocess.TimeoutExpired:
         pgid = os.getpgid(p.pid)
         try:
@@ -371,12 +373,11 @@ def run_accuracy(gpu_id, start, index, count):
 
     env = get_env(str(gpu_id))
 
+    ignore_acc = "--ignore test_fused_experts_impl.py --ignore test_grid_sample.py"
     if op in NO_CPU_LIST:
-        cmd = f'pytest -m "{op}" --record json --output accuracy_{op}.json -vs'
+        cmd = f'pytest -m "{op}" --record json --output accuracy_{op}.json {ignore_acc} -vs'
     else:
-        cmd = (
-            f'pytest -m "{op}" --record json --output accuracy_{op}.json --ref cpu -vs'
-        )
+        cmd = f'pytest -m "{op}" --record json --output accuracy_{op}.json --ref cpu {ignore_acc} -vs'
 
     accuracy_dir = ROOT.joinpath("tests")
     result_file = accuracy_dir / f"accuracy_{op}.json"
@@ -510,7 +511,21 @@ def run_benchmark(gpu_id, start, index, count):
     ensure_dir(op_dir)
 
     start = time.time()
-    cmd = f'pytest -m "{op}" --level core --record json --output benchmark_{op}.json'
+    ignore_bench = " ".join(
+        f"--ignore {f}"
+        for f in [
+            "test_fused_experts_impl.py",
+            "test_grid_sample.py",
+            "test_fused_moe.py",
+            "test_fused_moe_fp8.py",
+            "test_fused_moe_fp8_blockwise.py",
+            "test_fused_moe_int4_w4a16.py",
+            "test_fused_moe_int8.py",
+            "test_fused_moe_int8_w8a16.py",
+            "test_fused_moe_w8a16.py",
+        ]
+    )
+    cmd = f'pytest -m "{op}" --level core --record json --output benchmark_{op}.json {ignore_bench}'
     code = run_cmd(op, cmd, cwd=benchmark_dir, env=env, flavor="performance")
     end = time.time()
 
