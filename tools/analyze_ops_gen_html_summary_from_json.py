@@ -92,7 +92,7 @@ def extract_perf_speedups(op_data):
             if sp is not None and isinstance(sp, (int, float)):
                 speedups[dtype] = float(sp)
 
-    values = [v for v in speedups.values() if v > 0]
+    values = [v for v in speedups.values() if 0 < v <= 10]
     avg = (
         float(np.mean(values))
         if values and np
@@ -342,6 +342,7 @@ def generate_html(ops_list, env, timestamp, folder_name):
     perf_and_acc_pass = len(perf_passed_ops)
 
     speedups_list = [op["avg_speedup"] for op in ops_list if op["has_perf"]]
+    filtered_speedups = [s for s in speedups_list if 0 <= s <= 10]
 
     if speedups_list:
         arr = np.array(speedups_list) if np else speedups_list
@@ -350,7 +351,11 @@ def generate_html(ops_list, env, timestamp, folder_name):
             if np
             else sorted(speedups_list)[len(speedups_list) // 2]
         )
-        mean = float(np.mean(arr)) if np else sum(speedups_list) / len(speedups_list)
+        mean = (
+            float(np.mean(filtered_speedups))
+            if filtered_speedups and np
+            else (sum(filtered_speedups) / len(filtered_speedups) if filtered_speedups else 0.0)
+        )
         min_s = float(np.min(arr)) if np else min(speedups_list)
         max_s = float(np.max(arr)) if np else max(speedups_list)
 
@@ -1009,9 +1014,10 @@ def main():
     perf_ops = [op for op in ops_list if op["has_perf"]]
     if perf_ops:
         sps = [op["avg_speedup"] for op in perf_ops]
+        filtered_sps = [s for s in sps if 0 <= s <= 10]
         arr = np.array(sps) if np else sps
         median = float(np.median(arr)) if np else sorted(sps)[len(sps) // 2]
-        mean = float(np.mean(arr)) if np else sum(sps) / len(sps)
+        mean = float(np.mean(filtered_sps)) if np and filtered_sps else (sum(filtered_sps) / len(filtered_sps) if filtered_sps else 0.0)
         print(f"\n===== 分析摘要 =====")
         print(f"总算子数: {len(ops_list)}")
         print(f"精度通过: {passed}")
