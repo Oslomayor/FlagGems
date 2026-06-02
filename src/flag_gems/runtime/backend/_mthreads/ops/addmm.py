@@ -11,20 +11,14 @@ from flag_gems.runtime import torch_device_fn
 from flag_gems.utils import broadcastable_to, libentry, libtuner
 from flag_gems.utils import triton_lang_extension as ext
 
-logger = logging.getLogger(
-    f'flag_gems.runtime.backend._mthreads.ops.{__name__.split(".")[-1]}'
-)
+logger = logging.getLogger(f'flag_gems.runtime.backend._mthreads.ops.{__name__.split(".")[-1]}')
 
 
-EXPAND_CONFIG_FILENAME = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "addmm_mthreads_expand.yaml")
-)
+EXPAND_CONFIG_FILENAME = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "addmm_mthreads_expand.yaml"))
 
 
 def is_supported_sqmma_layout(tensor):
-    return tensor.is_contiguous() or (
-        tensor.stride(0) == 1 and tensor.stride(1) == tensor.shape[0]
-    )
+    return tensor.is_contiguous() or (tensor.stride(0) == 1 and tensor.stride(1) == tensor.shape[0])
 
 
 def is_sqmma_compatible(a, b, N, K):
@@ -115,9 +109,7 @@ def addmm_kernel(
 def addmm_fma(bias, mat1, mat2, *, beta=1, alpha=1):
     logger.debug("GEMS_MTHREADS ADDMM(FMA)")
     assert mat1.shape[1] == mat2.shape[0], "Incompatible dimensions"
-    assert broadcastable_to(
-        bias.shape, (mat1.shape[0], mat2.shape[1])
-    ), "Incompatible input shape"
+    assert broadcastable_to(bias.shape, (mat1.shape[0], mat2.shape[1])), "Incompatible input shape"
     M, K = mat1.shape
     _, N = mat2.shape
 
@@ -154,6 +146,36 @@ def addmm_fma(bias, mat1, mat2, *, beta=1, alpha=1):
     return out
 
 
+def addmm_sqmma_descriptor_pre_hook(nargs):
+    nargs["a_desc"].block_shape = [nargs["BLOCK_SIZE_M"], nargs["BLOCK_SIZE_K"]]
+    nargs["b_desc"].block_shape = [nargs["BLOCK_SIZE_K"], nargs["BLOCK_SIZE_N"]]
+    nargs["bias_desc"].block_shape = [nargs["BLOCK_SIZE_M"], nargs["BLOCK_SIZE_N"]]
+    nargs["c_desc"].block_shape = [nargs["BLOCK_SIZE_M"], nargs["BLOCK_SIZE_N"]]
+
+
+@libentry()
+@libtuner(
+    configs=runtime.ops_get_configs(
+        "addmm_sqmma",
+        pre_hook=addmm_sqmma_descriptor_pre_hook,
+        yaml_path=EXPAND_CONFIG_FILENAME,
+    )
+    if os.environ.get("USE_FLAGTUNE") == "1"
+    else [
+        triton.Config(
+            {"BLOCK_SIZE_M": 128, "BLOCK_SIZE_N": 128, "BLOCK_SIZE_K": 64},
+            num_stages=1,
+            num_warps=4,
+            pre_hook=addmm_sqmma_descriptor_pre_hook,
+        )
+    ],
+    key=["M", "N", "K"],
+    strategy=runtime.get_expand_config("addmm_sqmma", yaml_path=EXPAND_CONFIG_FILENAME)["strategy"]
+    if os.environ.get("USE_FLAGTUNE") == "1"
+    else ["default", "default", "default"],
+    warmup=5,
+    rep=5,
+)
 @triton.jit(do_not_specialize=["alpha", "beta"])
 def addmm_sqmma_kernel(
     a_desc,
@@ -165,6 +187,7 @@ def addmm_sqmma_kernel(
     K,
     alpha,
     beta,
+    DTYPE: tl.constexpr,
     BLOCK_SIZE_M: tl.constexpr,
     BLOCK_SIZE_N: tl.constexpr,
     BLOCK_SIZE_K: tl.constexpr,
@@ -188,21 +211,10 @@ def addmm_sqmma_kernel(
     tl.store_tensor_descriptor(c_desc, [offs_am, offs_bn], result)
 
 
-def get_triton_type(elem_type):
-    type_map = {
-        torch.float16: tl.float16,
-        torch.bfloat16: tl.bfloat16,
-        torch.float8_e4m3fn: tl.float8e4nv,
-    }
-    return type_map.get(elem_type, None)
-
-
 def addmm_sqmma(mat1, mat2, bias, elem_type, alpha, beta, M, N, K):
     logger.debug("GEMS_MTHREADS ADDMM(SQMMA)")
     device = mat1.device
-    assert broadcastable_to(
-        bias.shape, (mat1.shape[0], mat2.shape[1])
-    ), "Incompatible input shape"
+    assert broadcastable_to(bias.shape, (mat1.shape[0], mat2.shape[1])), "Incompatible input shape"
     if not mat1.is_contiguous():
         mat1 = mat1.contiguous()
     if not mat2.is_contiguous():
@@ -213,15 +225,12 @@ def addmm_sqmma(mat1, mat2, bias, elem_type, alpha, beta, M, N, K):
     c_type = a_type
     C = torch.empty((M, N), dtype=c_type, device=device)
     bias = bias.broadcast_to(C.shape).contiguous()
-    BLOCK_SIZE_M = 128
-    BLOCK_SIZE_N = 128
-    BLOCK_SIZE_K = 64
-    desc_a = TensorDescriptor.from_tensor(mat1, [BLOCK_SIZE_M, BLOCK_SIZE_K])
-    desc_b = TensorDescriptor.from_tensor(mat2, [BLOCK_SIZE_K, BLOCK_SIZE_N])
-    desc_bias = TensorDescriptor.from_tensor(bias, [BLOCK_SIZE_M, BLOCK_SIZE_N])
-    desc_c = TensorDescriptor.from_tensor(C, [BLOCK_SIZE_M, BLOCK_SIZE_N])
+    desc_a = TensorDescriptor.from_tensor(mat1, [1, 1])
+    desc_b = TensorDescriptor.from_tensor(mat2, [1, 1])
+    desc_bias = TensorDescriptor.from_tensor(bias, [1, 1])
+    desc_c = TensorDescriptor.from_tensor(C, [1, 1])
     grid = lambda META: (
-        triton.cdiv(M, BLOCK_SIZE_M) * triton.cdiv(N, BLOCK_SIZE_N),
+        triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N, META["BLOCK_SIZE_N"]),
         1,
         1,
     )
@@ -235,11 +244,7 @@ def addmm_sqmma(mat1, mat2, bias, elem_type, alpha, beta, M, N, K):
         K,
         alpha,
         beta,
-        BLOCK_SIZE_M,
-        BLOCK_SIZE_N,
-        BLOCK_SIZE_K,
-        num_warps=4,
-        num_stages=1,
+        str(a_type).split(".")[-1],
     )
     return C
 
@@ -278,22 +283,11 @@ def addmm_dtype(bias, mat1, mat2, out_dtype, *, beta=1, alpha=1):
 def addmm_dtype_out(bias, mat1, mat2, out_dtype, *, beta=1, alpha=1, out):
     logger.debug("GEMS_MTHREADS ADDMM_DTYPE_OUT")
     if mat1.dtype != mat2.dtype:
-        raise RuntimeError(
-            f"mat1 and mat2 must have the same dtype, but got {mat1.dtype} and {mat2.dtype}"
-        )
+        raise RuntimeError(f"mat1 and mat2 must have the same dtype, but got {mat1.dtype} and {mat2.dtype}")
     if out.dtype != out_dtype:
-        raise RuntimeError(
-            "out_dtype must be the same as the dtype of the provided out tensor"
-        )
-    if not (
-        out_dtype == mat1.dtype
-        or (
-            out_dtype == torch.float32 and mat1.dtype in (torch.float16, torch.bfloat16)
-        )
-    ):
-        raise RuntimeError(
-            "out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs"
-        )
+        raise RuntimeError("out_dtype must be the same as the dtype of the provided out tensor")
+    if not (out_dtype == mat1.dtype or (out_dtype == torch.float32 and mat1.dtype in (torch.float16, torch.bfloat16))):
+        raise RuntimeError("out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs")
     if bias.dtype != out_dtype and bias.dtype != mat1.dtype:
         raise RuntimeError("self dtype must match either out_dtype or mat1 dtype")
 
