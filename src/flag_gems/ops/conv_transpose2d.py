@@ -12,6 +12,8 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
+from flag_gems.runtime import torch_device_fn
 from flag_gems.utils import libentry
 
 logger = logging.getLogger(__name__)
@@ -56,9 +58,9 @@ def _direct_tiled_family_params(
         return None
     if input.dtype not in _GENERAL_TRITON_DTYPES or weight.dtype != input.dtype:
         return None
-    if input.device.type != "cuda" or weight.device != input.device:
+    if input.device.type != flag_gems.device or weight.device != input.device:
         return None
-    if input.dtype is torch.bfloat16 and not torch.cuda.is_bf16_supported():
+    if input.dtype is torch.bfloat16 and not torch_device_fn.is_bf16_supported():
         return None
     if input.dim() != 4 or weight.dim() != 4:
         return None
@@ -196,7 +198,7 @@ def _validate_conv_transpose2d_args(
     dilation_h,
     dilation_w,
 ):
-    if input.device.type != "cuda" or weight.device != input.device:
+    if input.device.type != flag_gems.device or weight.device != input.device:
         return False
     if input.dim() != 4 or weight.dim() != 4:
         return False
@@ -204,7 +206,7 @@ def _validate_conv_transpose2d_args(
         return False
     if input.dtype not in _GENERAL_TRITON_DTYPES or weight.dtype != input.dtype:
         return False
-    if input.dtype is torch.bfloat16 and not torch.cuda.is_bf16_supported():
+    if input.dtype is torch.bfloat16 and not torch_device_fn.is_bf16_supported():
         return False
     if bias is not None:
         if bias.device != input.device or bias.dtype != input.dtype:
@@ -323,11 +325,11 @@ def _can_use_stride2_pad1_3x3_direct(
         return False
     if input.dim() != 4 or weight.dim() != 4:
         return False
-    if input.device.type != "cuda" or weight.device != input.device:
+    if input.device.type != flag_gems.device or weight.device != input.device:
         return False
     if input.dtype not in _GENERAL_TRITON_DTYPES or weight.dtype != input.dtype:
         return False
-    if input.dtype is torch.bfloat16 and not torch.cuda.is_bf16_supported():
+    if input.dtype is torch.bfloat16 and not torch_device_fn.is_bf16_supported():
         return False
     if not input.is_contiguous() or not weight.is_contiguous():
         return False

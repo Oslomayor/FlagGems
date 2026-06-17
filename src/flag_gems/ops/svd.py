@@ -5,6 +5,7 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
 from flag_gems.runtime import device, torch_device_fn
 from flag_gems.utils import libentry
 
@@ -56,12 +57,16 @@ def _should_guard_gram_spectrum(batch, k):
 
 
 def _is_float32_cuda_matrix(input):
-    return input.is_cuda and input.dtype == torch.float32 and input.dim() >= 2
+    return (
+        input.device.type == flag_gems.device
+        and input.dtype == torch.float32
+        and input.dim() >= 2
+    )
 
 
 def _is_low_precision_cuda_matrix(input):
     return (
-        input.is_cuda
+        input.device.type == flag_gems.device
         and input.dtype in (torch.float16, torch.bfloat16)
         and input.dim() >= 2
     )
@@ -3442,7 +3447,7 @@ def _should_use_gram(batch, m, n):
 def svd(input, some=True, compute_uv=True):
     logger.debug("GEMS SVD")
     if (
-        input.is_cuda
+        input.device.type == flag_gems.device
         and input.dtype == torch.complex64
         and some
         and compute_uv

@@ -4,6 +4,7 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
 from flag_gems.runtime import torch_device_fn
 from flag_gems.utils import pointwise_dynamic
 
@@ -43,7 +44,7 @@ def fill_scalar_out(input, value, *, out=None):
 
 
 def fill_tensor(input, value):
-    if not value.is_cuda:
+    if value.device.type != flag_gems.device:
         return fill_scalar(input, value.item())
     logger.debug("GEMS FILL (Dynamic)")
     if value.ndim != 0:
@@ -59,7 +60,7 @@ def fill_tensor_out(input, value, *, out=None):
     logger.debug("GEMS FILL_TENSOR_OUT")
     if out is None:
         return fill_tensor(input, value)
-    if not value.is_cuda:
+    if value.device.type != flag_gems.device:
         return fill_scalar_out(input, value.item(), out=out)
     if value.ndim != 0:
         raise RuntimeError(
@@ -71,7 +72,7 @@ def fill_tensor_out(input, value, *, out=None):
 
 
 def fill_tensor_(self, value):
-    if not value.is_cuda:
+    if value.device.type != flag_gems.device:
         return fill_scalar_(self, value.item())
     logger.debug("GEMS FILL_TENSOR_")
     if value.ndim != 0:

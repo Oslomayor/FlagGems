@@ -9,6 +9,7 @@ import triton.language as tl
 import yaml
 
 import flag_gems
+from flag_gems.runtime import torch_device_fn
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +113,13 @@ def w8a8_block_fp8_matmul_kernel(
 def get_w8a8_block_fp8_configs(
     N: int, K: int, block_n: int, block_k: int
 ) -> Optional[Dict[int, Any]]:
-    if not torch.cuda.is_available():
+    if not torch_device_fn.is_available():
         logger.debug(
             "CUDA is unavailable on this backend; using default W8A8 block FP8 config."
         )
         return None
 
-    device_name = torch.cuda.get_device_name().replace(" ", "_")
+    device_name = torch_device_fn.get_device_name().replace(" ", "_")
     file_name = f"fp8_w8a8-{block_n}-{block_k}.yaml"
 
     config_dir = os.path.join(os.path.dirname(__file__), "..", "utils", "configs")

@@ -6,6 +6,8 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
+
 logger = logging.getLogger(__name__)
 
 
@@ -191,7 +193,7 @@ def upsample_bicubic2d(
         raise ValueError("Output size must be positive")
 
     device = input.device
-    if not input.is_cuda:
+    if input.device.type != flag_gems.device:
         raise ValueError("This Triton kernel requires CUDA tensors")
 
     if align_corners:

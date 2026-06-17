@@ -4,6 +4,7 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
 from flag_gems import runtime
 from flag_gems.ops.mm_streamk import streamk_mm
 from flag_gems.runtime import torch_device_fn
@@ -345,9 +346,9 @@ def cluster_remote_mm_scenario(a, b, c, M, N, K):
         HAS_TLE
         and BLOCK_CLUSTER_MESH is not None
         and capability[0] >= 9
-        and a.is_cuda
-        and b.is_cuda
-        and c.is_cuda
+        and a.device.type == flag_gems.device
+        and b.device.type == flag_gems.device
+        and c.device.type == flag_gems.device
         and a.dtype == torch.float16
         and b.dtype == torch.float16
         and c.dtype == torch.float16

@@ -2,6 +2,7 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
 from flag_gems import runtime
 
 
@@ -198,8 +199,15 @@ def fp8_paged_mqa_logits(
     block_tables: torch.Tensor,
     max_model_len: int,
 ) -> torch.Tensor:
-    assert q.is_cuda and kv_cache.is_cuda and weights.is_cuda
-    assert context_lens.is_cuda and block_tables.is_cuda
+    assert (
+        q.device.type == flag_gems.device
+        and kv_cache.device.type == flag_gems.device
+        and weights.device.type == flag_gems.device
+    )
+    assert (
+        context_lens.device.type == flag_gems.device
+        and block_tables.device.type == flag_gems.device
+    )
 
     batch_size, next_n, heads, dim = q.size()
     num_blocks, block_size, one, dim_plus_4 = kv_cache.size()

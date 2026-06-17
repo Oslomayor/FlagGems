@@ -5,6 +5,7 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
 from flag_gems.utils import libentry
 
 logger = logging.getLogger(__name__)
@@ -216,7 +217,11 @@ def _as_tuple(value: IntOrInts) -> tuple[int, ...]:
 
 
 def _can_use_triton(inp: torch.Tensor) -> bool:
-    return inp.is_cuda and inp.dim() <= MAX_DIMS and not inp.dtype.is_complex
+    return (
+        inp.device.type == flag_gems.device
+        and inp.dim() <= MAX_DIMS
+        and not inp.dtype.is_complex
+    )
 
 
 def _can_use_first_dim_triton(inp: torch.Tensor, dims: IntOrInts | None) -> bool:

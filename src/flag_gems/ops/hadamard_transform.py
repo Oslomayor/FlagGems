@@ -18,6 +18,8 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 
+import flag_gems
+
 # ============================================================
 # Triton kernel — v43: remove evict_first from loads + warps=2 for dim=256
 # ============================================================
@@ -656,7 +658,7 @@ def _hadamard_transform_fwd(x: torch.Tensor, scale: float) -> torch.Tensor:
         torch.float16,
         torch.bfloat16,
     ), f"hadamard_transform not implemented for input type '{input_dtype}'"
-    assert x.is_cuda, "hadamard_transform requires CUDA tensor"
+    assert x.device.type == flag_gems.device, "hadamard_transform requires CUDA tensor"
 
     # Pad to multiple of 8 (matching CUDA implementation)
     needs_pad = dim_og % 8 != 0

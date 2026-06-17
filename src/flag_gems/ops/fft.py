@@ -6,6 +6,7 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems
 from flag_gems.runtime import torch_device_fn
 from flag_gems.utils.triton_version_utils import HAS_TLE
 
@@ -888,7 +889,7 @@ def fft(x: torch.Tensor) -> torch.Tensor:
       decomposition with precomputed DFT/twiddle tables.
     """
     logger.debug("GEMS FFT")
-    assert x.is_cuda, "input must be on CUDA"
+    assert x.device.type == flag_gems.device, "input must be on CUDA"
     assert x.ndim == 2, "input must be 2D (M, N)"
     m, n = x.shape
     if not _is_power_of_two(n):

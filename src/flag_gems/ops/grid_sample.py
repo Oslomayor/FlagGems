@@ -11,6 +11,7 @@ import torch
 import triton
 import triton.language as tl
 
+import flag_gems  # noqa: F401 - used in docstring examples
 from flag_gems import runtime
 from flag_gems.utils import libentry
 
@@ -4638,8 +4639,8 @@ def grid_sample(
         Output tensor of shape (N, C, H_out, W_out) or (N, C, D_out, H_out, W_out)
 
     Examples:
-        >>> input = torch.randn(1, 3, 32, 32).cuda()
-        >>> grid = torch.randn(1, 64, 64, 2).cuda()
+        >>> input = torch.randn(1, 3, 32, 32).to(flag_gems.device)
+        >>> grid = torch.randn(1, 64, 64, 2).to(flag_gems.device)
         >>> output = grid_sample(input, grid, mode='bilinear')
         >>> print(output.shape)
         torch.Size([1, 3, 64, 64])
