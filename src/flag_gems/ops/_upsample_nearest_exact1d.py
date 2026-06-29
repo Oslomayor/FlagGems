@@ -99,8 +99,10 @@ def _launch_upsample_nearest_exact1d_kernel(input, out, output_size=None, scale=
             f"_upsample_nearest_exact1d expects a 3D tensor (N, C, W); got shape {tuple(input.shape)}"
         )
     if input.device.type != flag_gems.device or out.device.type != flag_gems.device:
-        # Fallback to the native operator on CPU or non-CUDA devices
-        return torch.ops.aten._upsample_nearest_exact1d(
+        # Fallback to the native operator on CPU or non-flag_gems devices.
+        # Use .default to bypass the flag_gems dispatch override and avoid
+        # infinite recursion when the override is active.
+        return torch.ops.aten._upsample_nearest_exact1d.default(
             input, [out.shape[-1]], [scale] if scale is not None else None
         )
 
