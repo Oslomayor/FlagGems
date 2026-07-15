@@ -5,15 +5,15 @@
 输出: 在目标文件夹下生成 report.html 和 summary.xlsx
 """
 
+import sys
 import json
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 
 try:
     import openpyxl
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
 except ImportError:
     print("错误: 需要安装 openpyxl")
@@ -39,7 +39,7 @@ def load_results(folder):
 
     for jf in json_files:
         print(f"  读取: {jf.name}")
-        with open(jf, "r", encoding="utf-8") as f:
+        with open(jf, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         if not timestamp and "timestamp" in data:
@@ -61,10 +61,7 @@ def load_results(folder):
                 new_acc = op_data.get("accuracy", {})
                 old_acc = existing.get("accuracy", {})
 
-                if (
-                    new_acc.get("status") == "Failed"
-                    and old_acc.get("status") != "Failed"
-                ):
+                if new_acc.get("status") == "Failed" and old_acc.get("status") != "Failed":
                     merged[op_name] = op_data
                 elif old_acc.get("status") == "Failed":
                     pass
@@ -92,12 +89,8 @@ def extract_perf_speedups(op_data):
             if sp is not None and isinstance(sp, (int, float)):
                 speedups[dtype] = float(sp)
 
-    values = [v for v in speedups.values() if 0 < v <= 10]
-    avg = (
-        float(np.mean(values))
-        if values and np
-        else (sum(values) / len(values) if values else 0.0)
-    )
+    values = [v for v in speedups.values() if v > 0]
+    avg = float(np.mean(values)) if values and np else (sum(values) / len(values) if values else 0.0)
 
     return speedups, avg
 
@@ -232,9 +225,7 @@ def generate_excel(ops_list, output_path):
     default_font = Font(name="Microsoft YaHei", size=10)
     header_font = Font(name="Microsoft YaHei", size=10, bold=True)
     blue_fill = PatternFill(start_color="BBDEFB", end_color="BBDEFB", fill_type="solid")
-    header_fill = PatternFill(
-        start_color="CCCCCC", end_color="CCCCCC", fill_type="solid"
-    )
+    header_fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
     thin_border = Border(
         left=Side(style="thin"),
         right=Side(style="thin"),
@@ -256,9 +247,7 @@ def generate_excel(ops_list, output_path):
     for row_idx, op in enumerate(ops_list, 2):
         ws1.cell(row=row_idx, column=1, value=op["name"]).border = thin_border
         ws1.cell(row=row_idx, column=2, value=op["problem"] or "").border = thin_border
-        ws1.cell(
-            row=row_idx, column=3, value=op["responsibility"] or ""
-        ).border = thin_border
+        ws1.cell(row=row_idx, column=3, value=op["responsibility"] or "").border = thin_border
 
         if op["category"] in ("failed", "skipped", "error", "no_tests"):
             ws1.cell(row=row_idx, column=1).fill = blue_fill
@@ -270,14 +259,8 @@ def generate_excel(ops_list, output_path):
     # ---- Sheet 2: SpeedUp ----
     ws2 = wb.create_sheet("SpeedUp")
     dtype_cols = ["bool", "int32", "fp32", "fp16", "bf16", "int16", "cf64"]
-    speed_headers = [
-        "算子名",
-        "精度测例总数",
-        "精度测例通过数",
-        "精度测例失败数",
-        "精度测例skip数",
-        "性能加速比",
-    ] + dtype_cols
+    speed_headers = ["算子名", "精度测例总数", "精度测例通过数", "精度测例失败数",
+                     "精度测例skip数", "性能加速比"] + dtype_cols
 
     for col_idx, h in enumerate(speed_headers, 1):
         cell = ws2.cell(row=1, column=col_idx, value=h)
@@ -294,9 +277,7 @@ def generate_excel(ops_list, output_path):
         ws2.cell(row=row_idx, column=5, value=op["skipped"]).border = thin_border
 
         if op["has_perf"]:
-            ws2.cell(
-                row=row_idx, column=6, value=round(op["avg_speedup"], 6)
-            ).border = thin_border
+            ws2.cell(row=row_idx, column=6, value=round(op["avg_speedup"], 6)).border = thin_border
         else:
             ws2.cell(row=row_idx, column=6).border = thin_border
 
@@ -304,11 +285,50 @@ def generate_excel(ops_list, output_path):
             col = 7 + dtype_idx
             val = op["speedups"].get(dtype_key)
             if val is not None and val > 0:
-                ws2.cell(
-                    row=row_idx, column=col, value=round(val, 6)
-                ).border = thin_border
+                ws2.cell(row=row_idx, column=col, value=round(val, 6)).border = thin_border
             else:
                 ws2.cell(row=row_idx, column=col).border = thin_border
+
+    last_data_row = len(ops_list) + 1  # 表头在第1行，数据行2..last_data_row
+    stats_start = last_data_row + 2     # 留1空行后开始写统计
+    total_ops_with_perf = sum(1 for op in ops_list if op["has_perf"])
+
+    if total_ops_with_perf > 0:
+        dist_defs = [
+            ("<60%",     f'COUNTIF(F2:F{last_data_row},"<0.6")'),
+            ("60%~80%",  f'COUNTIFS(F2:F{last_data_row},">=0.6",F2:F{last_data_row},"<0.8")'),
+            ("80%~100%", f'COUNTIFS(F2:F{last_data_row},">=0.8",F2:F{last_data_row},"<1.0")'),
+            (">100%",    f'COUNTIF(F2:F{last_data_row},">=1")'),
+        ]
+        sum_row = stats_start + 1 + len(dist_defs)
+
+        ws2.cell(row=stats_start, column=5, value="AVERAGE").border = thin_border
+        avg_cell = ws2.cell(row=stats_start, column=6)
+        avg_cell.value = f"=AVERAGEIF(F2:F{last_data_row},\"<=10\")"
+        avg_cell.number_format = '0.00'
+        avg_cell.border = thin_border
+
+        for i, (label, formula) in enumerate(dist_defs):
+            row = stats_start + 1 + i
+            ws2.cell(row=row, column=5, value=label).border = thin_border
+            cnt_cell = ws2.cell(row=row, column=6)
+            cnt_cell.value = f"={formula}"
+            cnt_cell.number_format = '0'
+            cnt_cell.border = thin_border
+            pct_cell = ws2.cell(row=row, column=7)
+            pct_cell.value = f"=IF(F{sum_row}=0,0,F{row}/F{sum_row})"
+            pct_cell.number_format = '0.00%'
+            pct_cell.border = thin_border
+
+        ws2.cell(row=sum_row, column=5, value="SUM").border = thin_border
+        scnt_cell = ws2.cell(row=sum_row, column=6)
+        scnt_cell.value = f"=SUM(F{stats_start + 1}:F{sum_row - 1})"
+        scnt_cell.number_format = '0'
+        scnt_cell.border = thin_border
+        spct_cell = ws2.cell(row=sum_row, column=7)
+        spct_cell.value = f"=SUM(G{stats_start + 1}:G{sum_row - 1})"
+        spct_cell.number_format = '0.00%'
+        spct_cell.border = thin_border
 
     ws2.column_dimensions["A"].width = 30
     for col_idx in range(2, len(speed_headers) + 1):
@@ -336,26 +356,15 @@ def generate_html(ops_list, env, timestamp, folder_name):
     accuracy_error = len(error_ops)
     accuracy_no_test = len(no_test_ops)
 
-    perf_passed_ops = [
-        op for op in ops_list if op["has_perf"] and op["category"] == "passed"
-    ]
+    perf_passed_ops = [op for op in ops_list if op["has_perf"] and op["category"] == "passed"]
     perf_and_acc_pass = len(perf_passed_ops)
 
-    speedups_list = [op["avg_speedup"] for op in ops_list if op["has_perf"]]
-    filtered_speedups = [s for s in speedups_list if 0 <= s <= 10]
+    speedups_list = [op["avg_speedup"] for op in ops_list if op["has_perf"] and op["avg_speedup"] <= 10]
 
     if speedups_list:
         arr = np.array(speedups_list) if np else speedups_list
-        median = (
-            float(np.median(arr))
-            if np
-            else sorted(speedups_list)[len(speedups_list) // 2]
-        )
-        mean = (
-            float(np.mean(filtered_speedups))
-            if filtered_speedups and np
-            else (sum(filtered_speedups) / len(filtered_speedups) if filtered_speedups else 0.0)
-        )
+        median = float(np.median(arr)) if np else sorted(speedups_list)[len(speedups_list) // 2]
+        mean = float(np.mean(arr)) if np else sum(speedups_list) / len(speedups_list)
         min_s = float(np.min(arr)) if np else min(speedups_list)
         max_s = float(np.max(arr)) if np else max(speedups_list)
 
@@ -376,20 +385,13 @@ def generate_html(ops_list, env, timestamp, folder_name):
         pct_below = pct_between = pct_above = 0
 
     # 图表数据: (func_name, speedup)
-    chart_data = json.dumps(
-        [[op["name"], round(op["avg_speedup"], 6)] for op in ops_list if op["has_perf"]]
-    )
+    chart_data = json.dumps([[op["name"], round(op["avg_speedup"], 6)] for op in ops_list if op["has_perf"]])
 
     # 慢算子 (speedup < 0.8)
-    slow_ops = sorted(
-        [op for op in ops_list if op["has_perf"] and op["avg_speedup"] < 0.8],
-        key=lambda x: x["avg_speedup"],
-    )
-    fast_ops = sorted(
-        [op for op in ops_list if op["has_perf"] and op["avg_speedup"] > 2.0],
-        key=lambda x: x["avg_speedup"],
-        reverse=True,
-    )
+    slow_ops = sorted([op for op in ops_list if op["has_perf"] and op["avg_speedup"] < 0.8],
+                      key=lambda x: x["avg_speedup"])
+    fast_ops = sorted([op for op in ops_list if op["has_perf"] and op["avg_speedup"] > 2.0],
+                      key=lambda x: x["avg_speedup"], reverse=True)
 
     slow_rows = ""
     for op in slow_ops:
@@ -422,7 +424,7 @@ def generate_html(ops_list, env, timestamp, folder_name):
                 elif isinstance(items, str):
                     detail_html += (
                         f'<div class="detail-reason"><strong>{category}:</strong> '
-                        f"{html_module.escape(items[:200])}</div>"
+                        f'{html_module.escape(items[:200])}</div>'
                     )
 
         if op["category"] == "failed":
@@ -442,7 +444,7 @@ def generate_html(ops_list, env, timestamp, folder_name):
             status_label = "Error"
             card_class = ""
 
-        problem_cards += f"""
+        problem_cards += f'''
         <div class="fail-card{card_class}">
             <div class="fail-header">
                 <span class="fail-name">{name}</span>
@@ -453,7 +455,7 @@ def generate_html(ops_list, env, timestamp, folder_name):
                 总计 {op["total"]} | 通过 {op["passed"]} | 失败 {op["failed"]} | 跳过 {op["skipped"]}
             </div>
             <div class="fail-details">{detail_html if detail_html else '<span class="no-detail">无详细信息</span>'}</div>
-        </div>"""
+        </div>'''
 
     # 通过算子摘要
     passed_summary = ""
@@ -473,7 +475,7 @@ def generate_html(ops_list, env, timestamp, folder_name):
         python_version = env.get("python", "N/A")
         os_name = f'{env.get("os_name", "")} {env.get("os_release", "")}'.strip()
 
-        env_html = f"""
+        env_html = f'''
         <div class="env-grid">
             <div class="env-item-card"><span class="env-key">FlagGems</span><span class="env-val">{fg_version}</span></div>
             <div class="env-item-card"><span class="env-key">Triton</span><span class="env-val">{triton_version}</span></div>
@@ -481,7 +483,7 @@ def generate_html(ops_list, env, timestamp, folder_name):
             <div class="env-item-card"><span class="env-key">Python</span><span class="env-val">{python_version}</span></div>
             <div class="env-item-card"><span class="env-key">Device</span><span class="env-val">{device} ({vendor})</span></div>
             <div class="env-item-card"><span class="env-key">OS</span><span class="env-val">{os_name}</span></div>
-        </div>"""
+        </div>'''
 
     # 优先/次优先优化
     priority_ops = [
@@ -498,7 +500,7 @@ def generate_html(ops_list, env, timestamp, folder_name):
 
     pass_rate = (accuracy_passed / total * 100) if total > 0 else 0
 
-    html = f"""<!DOCTYPE html>
+    html = f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -966,7 +968,7 @@ def generate_html(ops_list, env, timestamp, folder_name):
         document.addEventListener('DOMContentLoaded', updateChart);
     </script>
 </body>
-</html>"""
+</html>'''
 
     return html
 
@@ -995,9 +997,7 @@ def main():
     skipped = sum(1 for op in ops_list if op["category"] == "skipped")
     error = sum(1 for op in ops_list if op["category"] == "error")
     no_test = sum(1 for op in ops_list if op["category"] == "no_tests")
-    print(
-        f"通过: {passed}, 失败: {failed}, 跳过: {skipped}, 无精度用例: {no_test}, Error: {error}"
-    )
+    print(f"通过: {passed}, 失败: {failed}, 跳过: {skipped}, 无精度用例: {no_test}, Error: {error}")
 
     # 生成 Excel
     xlsx_path = folder / "summary.xlsx"
@@ -1006,18 +1006,17 @@ def main():
     # 生成 HTML
     html = generate_html(ops_list, env, timestamp, folder.name)
     html_path = folder / "report.html"
-    with open(html_path, "w", encoding="utf-8") as f:
+    with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html)
     print(f"  HTML 已生成: {html_path}")
 
     # 摘要
     perf_ops = [op for op in ops_list if op["has_perf"]]
     if perf_ops:
-        sps = [op["avg_speedup"] for op in perf_ops]
-        filtered_sps = [s for s in sps if 0 <= s <= 10]
+        sps = [op["avg_speedup"] for op in perf_ops if op["avg_speedup"] <= 10]
         arr = np.array(sps) if np else sps
         median = float(np.median(arr)) if np else sorted(sps)[len(sps) // 2]
-        mean = float(np.mean(filtered_sps)) if np and filtered_sps else (sum(filtered_sps) / len(filtered_sps) if filtered_sps else 0.0)
+        mean = float(np.mean(arr)) if np else sum(sps) / len(sps)
         print(f"\n===== 分析摘要 =====")
         print(f"总算子数: {len(ops_list)}")
         print(f"精度通过: {passed}")
