@@ -160,10 +160,11 @@ def test__index_put_impl__unsafe_param(dtype, unsafe):
     """Test _index_put_impl_ with both unsafe=True and unsafe=False"""
 
     inp = torch.randn((32, 64), dtype=dtype, device=flag_gems.device)
-    indices = [torch.randint(0, 32, (8,), device=flag_gems.device)]
+    # accumulate=False requires unique indices for a defined result.
+    indices = [torch.randperm(32, device=flag_gems.device)[:8]]
     values = torch.randn((8, 64), dtype=dtype, device=flag_gems.device)
 
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp).clone()
     ref_indices = [utils.to_reference(index) for index in indices]
     ref_values = utils.to_reference(values)
     torch._index_put_impl_(
